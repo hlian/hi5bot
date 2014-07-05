@@ -33,7 +33,7 @@ messageOfRequest db raw = do
                  , messageUserName = userName
                  , messageReply = reply }
   where
-    params = M.fromAscList (queryString raw)
+    params = M.fromList (queryString raw)
     p key = case M.lookup key params of
       Just (Just value) -> Just value
       _  -> Nothing
