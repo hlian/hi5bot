@@ -35,8 +35,8 @@ messageOfRequest db raw = do
   where
     params = M.fromAscList (queryString raw)
     p key = case M.lookup key params of
-      Just value -> value
-      _  -> error (show params)
+      Just (Just value) -> Just value
+      _  -> Nothing
 
 jsonOfReply :: Message -> Message -> JSObject U.ByteString
 jsonOfReply msg reply = toJSObject pairs
@@ -57,7 +57,7 @@ postReply msg reply = do
 
 application :: MVar.MVar DB -> Application
 application dbM rawRequest respond = do
-  putStrLn ("Incoming request: " ++ (show $ pathInfo rawRequest) ++ (show $ queryString rawRequest))
+  putStrLn ("Incoming request: " ++ (show $ rawPathInfo rawRequest) ++ (show $ rawQueryString rawRequest))
   db <- MVar.readMVar dbM
   case messageOfRequest db rawRequest of
     Just msg -> case messageReply msg of
