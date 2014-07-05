@@ -28,7 +28,9 @@ dbDelete dbM message = MVar.modifyMVar_ dbM (\db -> return $ M.delete (messageCh
 
 messageOfRequest :: DB -> Request -> Either String Message
 messageOfRequest db raw = do
-  channelName <- p "channel_name"
+  channelName <- case p "channel_name" of
+    Right "directmessage" -> throwError ("Can't high-five in a direct message!")
+    x -> x
   userName <- p "user_name"
   let reply = M.lookup channelName db
   return Message { messageChannelName = channelName
