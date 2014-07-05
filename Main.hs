@@ -54,7 +54,7 @@ jsonOfOffer :: Message -> JSObject U.ByteString
 jsonOfOffer msg = toJSObject pairs
   where pairs = [ ("channel", B.concat ["#", messageChannelName msg])
                 , ("username", "hi5bot")
-                , ("text", U.fromString $ printf "@%s raises a hand..." (U.toString $ messageUserName msg))
+                , ("text", U.fromString $ printf "@%s formally requests a /hi5" (U.toString $ messageUserName msg))
                 , ("icon_emoji", ":hand:")
                 ]
 
