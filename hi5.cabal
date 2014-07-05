@@ -20,4 +20,5 @@ executable hi5
                      , json
                      , http-conduit
                      , utf8-string
+                     , mtl
   default-language:    Haskell2010

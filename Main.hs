@@ -1,7 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import qualified Control.Concurrent.MVar as MVar
+import Control.Monad.Error (throwError)
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.UTF8 as U
 import qualified Data.Map as M
 import Network.Wai
@@ -24,7 +26,7 @@ dbPut dbM message = MVar.modifyMVar_ dbM (\db -> return $ M.insert (messageChann
 dbDelete :: MVar.MVar DB -> Message -> IO ()
 dbDelete dbM message = MVar.modifyMVar_ dbM (\db -> return $ M.delete (messageChannelName message) db)
 
-messageOfRequest :: DB -> Request -> Maybe Message
+messageOfRequest :: DB -> Request -> Either String Message
 messageOfRequest db raw = do
   channelName <- p "channel_name"
   userName <- p "user_name"
@@ -35,8 +37,8 @@ messageOfRequest db raw = do
   where
     params = M.fromList (queryString raw)
     p key = case M.lookup key params of
-      Just (Just value) -> Just value
-      _  -> Nothing
+      Just (Just value) -> return value
+      _  -> throwError ("Unable to find key in params: " ++ show key)
 
 jsonOfReply :: Message -> Message -> JSObject U.ByteString
 jsonOfReply msg reply = toJSObject pairs
@@ -60,14 +62,14 @@ application dbM rawRequest respond = do
   putStrLn ("Incoming request: " ++ (show $ rawPathInfo rawRequest) ++ (show $ rawQueryString rawRequest))
   db <- MVar.readMVar dbM
   case messageOfRequest db rawRequest of
-    Just msg -> case messageReply msg of
+    Left err -> respondWithError err
+    Right msg -> case messageReply msg of
       Just reply -> (dbDelete dbM msg >> postReply msg reply >> respondWithEmpty)
       Nothing -> (dbPut dbM msg >> respondWithEmpty)
-    _ -> respondWithError "The hi5 bot is on the fritz!"
   where
     headers = [("Content-Type", "text/plain")]
     respondWithEmpty = (respond . responseLBS status200 headers) ""
-    respondWithError = respond . responseLBS status400 headers
+    respondWithError = respond . responseLBS status400 headers . L.fromStrict . U.fromString
 
 main = do
   db <- MVar.newMVar M.empty
