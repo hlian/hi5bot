@@ -47,17 +47,25 @@ jsonOfReply msg reply = toJSObject pairs
   where pairs = [ ("channel", B.concat ["#", messageChannelName msg])
                 , ("username", "hi5bot")
                 , ("text", U.fromString $ printf "@%s just high-fived @%s!" (U.toString $ messageUserName msg) (U.toString $ messageUserName reply))
+                , ("icon_emoji", ":rainbow:")
+                ]
+
+jsonOfOffer :: Message -> JSObject U.ByteString
+jsonOfOffer msg = toJSObject pairs
+  where pairs = [ ("channel", B.concat ["#", messageChannelName msg])
+                , ("username", "hi5bot")
+                , ("text", U.fromString $ printf "@%s raises a hand..." (U.toString $ messageUserName msg))
                 , ("icon_emoji", ":hand:")
                 ]
 
-postReply :: Message -> Message -> IO ()
-postReply msg reply = do
+postPayload :: (JSON a) => a -> IO ()
+postPayload payload = do
   request0 <- H.parseUrl "https://trello.slack.com/services/hooks/incoming-webhook?token=XXX"
   let request = H.urlEncodedBody pairs request0
   response <- H.withManager (H.httpLbs request)
   putStrLn (show $ H.responseBody response)
   return ()
-    where pairs = [("payload", (U.fromString . encode) (jsonOfReply msg reply))]
+    where pairs = [("payload", (U.fromString . encode) payload)]
 
 application :: MVar.MVar DB -> Application
 application dbM rawRequest respond = do
@@ -67,9 +75,11 @@ application dbM rawRequest respond = do
     Left err -> respondWithError err
     Right msg -> case messageReply msg of
       Just reply -> (dbDelete dbM msg >> postReply msg reply >> respondWithEmpty)
-      Nothing -> (dbPut dbM msg >> respondWithEmpty)
+      Nothing -> (dbPut dbM msg >> postOffer msg >> respondWithEmpty)
   where
     headers = [("Content-Type", "text/plain")]
+    postOffer msg = postPayload $ jsonOfOffer msg
+    postReply msg reply = postPayload $ jsonOfReply msg reply
     respondWithEmpty = (respond . responseLBS status200 headers) ""
     respondWithError = respond . responseLBS status400 headers . L.fromStrict . U.fromString
 
