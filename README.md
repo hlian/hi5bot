@@ -11,3 +11,7 @@ cabal run
 This will launch an HTTP server that listens to port 81.
 
 Create a Custom Command (like `/hi5`) and point it at the HTTP server.
+
+Now, should you type `/hi5`, you'll get this:
+
+![hi5bot in action!](screenshot.png)
