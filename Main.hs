@@ -93,4 +93,3 @@ main = do
       db <- MVar.newMVar M.empty
       run 81 (application db)
     False -> error "Cannot find file containing the token for the incoming webhook"
-
