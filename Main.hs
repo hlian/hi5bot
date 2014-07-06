@@ -2,12 +2,10 @@
 
 import qualified Control.Concurrent.MVar as MVar
 import Control.Monad.Error (throwError)
-import Control.Exception.Base (assert)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.UTF8 as U
 import qualified Data.Map as M
-import Data.Text as T
 import Network.Wai
 import qualified Network.HTTP.Conduit as H
 import Network.HTTP.Types (status200, status400)
@@ -81,7 +79,7 @@ application dbM rawRequest respond = do
       Nothing -> (dbPut dbM msg >> postOffer msg >> respondWithEmpty)
   where
     headers = [("Content-Type", "text/plain")]
-    tokenM = readFile "token"
+    tokenM = fmap (filter (/= '\n')) (readFile "token")
     postOffer msg = tokenM >>= \t -> postPayload t (jsonOfOffer msg)
     postReply msg reply = tokenM >>= \t -> postPayload t (jsonOfReply msg reply)
     respondWithEmpty = (respond . responseLBS status200 headers) ""
