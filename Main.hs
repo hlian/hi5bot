@@ -2,14 +2,17 @@
 
 import qualified Control.Concurrent.MVar as MVar
 import Control.Monad.Error (throwError)
+import Control.Exception.Base (assert)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.UTF8 as U
 import qualified Data.Map as M
+import Data.Text as T
 import Network.Wai
 import qualified Network.HTTP.Conduit as H
 import Network.HTTP.Types (status200, status400)
 import Network.Wai.Handler.Warp (run)
+import System.Directory (doesFileExist)
 import Text.JSON
 import Text.Printf
 
@@ -58,9 +61,9 @@ jsonOfOffer msg = toJSObject pairs
                 , ("icon_emoji", ":hand:")
                 ]
 
-postPayload :: (JSON a) => a -> IO ()
-postPayload payload = do
-  request0 <- H.parseUrl "https://trello.slack.com/services/hooks/incoming-webhook?token=XXX"
+postPayload :: (JSON a) => String -> a -> IO ()
+postPayload token payload = do
+  request0 <- H.parseUrl ("https://trello.slack.com/services/hooks/incoming-webhook?token=" ++ token)
   let request = H.urlEncodedBody pairs request0
   response <- H.withManager (H.httpLbs request)
   putStrLn (show $ H.responseBody response)
@@ -78,12 +81,18 @@ application dbM rawRequest respond = do
       Nothing -> (dbPut dbM msg >> postOffer msg >> respondWithEmpty)
   where
     headers = [("Content-Type", "text/plain")]
-    postOffer msg = postPayload $ jsonOfOffer msg
-    postReply msg reply = postPayload $ jsonOfReply msg reply
+    tokenM = readFile "token"
+    postOffer msg = tokenM >>= \t -> postPayload t (jsonOfOffer msg)
+    postReply msg reply = tokenM >>= \t -> postPayload t (jsonOfReply msg reply)
     respondWithEmpty = (respond . responseLBS status200 headers) ""
     respondWithError = respond . responseLBS status400 headers . L.fromStrict . U.fromString
 
+main :: IO ()
 main = do
-  db <- MVar.newMVar M.empty
-  run 81 (application db)
+  tokenExists <- doesFileExist "token"
+  case tokenExists of
+    True -> do
+      db <- MVar.newMVar M.empty
+      run 81 (application db)
+    False -> error "Cannot find file containing the token for the incoming webhook"
 

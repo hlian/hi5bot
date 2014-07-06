@@ -15,10 +15,13 @@ executable hi5
                      , warp >=3.0 && <3.1
                      , http-types >0.8 && <0.9
                      , wai >=3.0 && <3.1
+                     -- I got real lazy about versions right here
                      , containers
                      , bytestring
                      , json
                      , http-conduit
                      , utf8-string
                      , mtl
+                     , text
+                     , directory
   default-language:    Haskell2010
