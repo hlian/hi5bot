@@ -49,6 +49,7 @@ jsonOfReply msg reply = toJSObject pairs
                 , ("username", "hi5bot")
                 , ("text", U.fromString $ printf "@%s just high-fived @%s!" (U.toString $ messageUserName msg) (U.toString $ messageUserName reply))
                 , ("icon_emoji", ":rainbow:")
+                , ("parse", "full")
                 ]
 
 jsonOfOffer :: Message -> JSObject U.ByteString
@@ -57,6 +58,7 @@ jsonOfOffer msg = toJSObject pairs
                 , ("username", "hi5bot")
                 , ("text", U.fromString $ printf "@%s formally requests a /hi5" (U.toString $ messageUserName msg))
                 , ("icon_emoji", ":hand:")
+                , ("parse", "full")
                 ]
 
 postPayload :: (JSON a) => String -> a -> IO ()
