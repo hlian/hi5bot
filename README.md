@@ -1,3 +1,11 @@
+## Features
+
+* Only needs an incoming hook and a custom command!
+* You can high-five anybody in the room with `/hi5` ...
+* ... or target someone specifically `/hi5 hermione` ...
+* or even high-five yourself.
+* Watch out, though! People might steal that high-five if Hermione isn't fast enough.
+
 ## Setup
 
 Create an Incoming Hook and note the token. Write the token down in a `token` file.
