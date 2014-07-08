@@ -50,6 +50,7 @@ personOfRequest :: Request -> Either String Person
 personOfRequest raw = do
   channel <- case p "channel_name" of
     Right "directmessage" -> throwError ("Can't high-five in a direct message!")
+    Right "privategroup" -> throwError ("Can't high-five in a private group!")
     x -> x
   user <- p "user_name"
 
