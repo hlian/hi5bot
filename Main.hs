@@ -18,11 +18,17 @@ import Text.JSON
 import Text.Printf
 
 type Channel = U.ByteString
-type User = U.ByteString
+newtype User = User String deriving (Eq, Ord)
 data Want = WantsUser User | WantsChannel deriving (Eq, Show, Ord)
 data Person = Person User Channel Want deriving (Eq, Show, Ord)
 
 type DB = Map Channel [Person]
+
+instance Show User where
+  show (User s) = s
+
+userOf :: U.ByteString -> User
+userOf = User . filter (/= '@') . U.toString
 
 dbPut :: MVar.MVar DB -> Person -> IO ()
 dbPut dbM person@(Person _ channel _) = MVar.modifyMVar_ dbM (return . f)
@@ -31,9 +37,6 @@ dbPut dbM person@(Person _ channel _) = MVar.modifyMVar_ dbM (return . f)
 dbDelete :: MVar.MVar DB -> Person -> IO ()
 dbDelete dbM person@(Person _ channel _) = MVar.modifyMVar_ dbM (return . f)
   where f db = M.insert channel [p | p <- maybe [] id (M.lookup channel db), p /= person] db
-
-u :: U.ByteString -> String
-u = U.toString
 
 findPerson :: DB -> Channel -> Want -> Maybe Person
 findPerson db channel want = do
@@ -50,23 +53,24 @@ personOfRequest raw = do
     x -> x
   user <- p "user_name"
 
-  let text = case p "text" of Left _ -> Nothing; Right x -> Just x
   return $ case text of
-    Nothing -> Person user channel WantsChannel
-    Just userName -> Person user channel (WantsUser userName)
+    Nothing -> Person (userOf user) channel WantsChannel
+    Just userName -> Person (userOf user) channel (WantsUser $ userOf userName)
+
   where
     params = M.fromList (queryString raw)
     p key = case M.lookup key params of
       Just (Just "") -> throwError ("Empty key in params: " ++ show key)
       Just (Just value) -> return value
       _  -> throwError ("Unable to find key in params: " ++ show key)
+    text = case p "text" of Left _ -> Nothing; Right x -> Just x
 
 -- Giver -> Receiver
 jsonOfSecondHand :: Person -> Person -> JSObject U.ByteString
 jsonOfSecondHand (Person giver _ _) (Person receiver channel want) = toJSObject pairs
   where pairs = [ ("channel", B.concat ["#", channel])
                 , ("username", "hi5bot")
-                , ("text", U.fromString $ printf "@%s %s" (u giver) addendum)
+                , ("text", U.fromString $ printf "@%s %s" (show giver) addendum)
                 , ("icon_emoji", ":rainbow:")
                 , ("parse", "full")
                 ]
@@ -74,21 +78,21 @@ jsonOfSecondHand (Person giver _ _) (Person receiver channel want) = toJSObject 
         addendum = case giver == receiver of
           True -> "touches a hand to the other hand while people avert their eyes."
           False -> case want of
-            WantsUser user' | giver /= user' -> printf "swoops in for a high-five with @%s! (Better luck next time, @%s.) :hand::octopus:" (u receiver) (u user')
-                            | otherwise -> printf "completes the high-five with @%s, and it's awesome. :hand::guitar:" (u receiver)
-            WantsChannel -> printf "high-fives @%s! :hand:" (u receiver)
+            WantsUser user' | giver /= user' -> printf "swoops in for a high-five with @%s! (Better luck next time, @%s.) :hand::octopus:" (show receiver) (show user')
+                            | otherwise -> printf "completes the high-five with @%s, and it's awesome. :hand::guitar:" (show receiver)
+            WantsChannel -> printf "high-fives @%s! :hand:" (show receiver)
 
 jsonOfFirstHand :: Person -> JSObject U.ByteString
 jsonOfFirstHand (Person user channel want) = toJSObject pairs
   where pairs = [ ("channel", B.concat ["#", channel])
                 , ("username", "hi5bot")
-                , ("text", U.fromString $ printf "@%s formally requests a %s." (u user) addendum)
+                , ("text", U.fromString $ printf "@%s formally requests a %s." (show user) addendum)
                 , ("icon_emoji", ":hand:")
                 , ("parse", "full")
                 ]
         addendum :: String
         addendum = case want of
-          WantsUser user' -> printf "`/hi5` from @%s" (u user')
+          WantsUser user' -> printf "`/hi5` from @%s" (show user')
           WantsChannel -> "`/hi5`"
 
 postPayload :: (JSON a) => String -> a -> IO ()
