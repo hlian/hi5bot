@@ -93,12 +93,20 @@ jsonOfFirstHand (Person user channel want) = toJSObject pairs
 
 postPayload :: (JSON a) => String -> a -> IO ()
 postPayload token payload = do
-  request0 <- H.parseUrl ("https://trello.slack.com/services/hooks/incoming-webhook?token=" ++ token)
-  let request = H.urlEncodedBody pairs request0
-  response <- H.withManager (H.httpLbs request)
-  putStrLn (show $ H.responseBody response)
-  return ()
-    where pairs = [("payload", (U.fromString . encode) payload)]
+  args <- getArgs
+  case args == ["-n"] of
+    True -> do
+      putStrLn ("+ Pretending (-n) to post " ++ (encode payload))
+      return ()
+    False -> do
+      response <- get request
+      putStrLn (show $ H.responseBody response)
+      return ()
+    where
+      baseRequest = H.parseUrl ("https://trello.slack.com/services/hooks/incoming-webhook?token=" ++ token)
+      request = fmap (H.urlEncodedBody pairs) baseRequest
+      get r = r >>= (H.withManager . H.httpLbs)
+      pairs = [("payload", (U.fromString . encode) payload)]
 
 application :: MVar.MVar DB -> Application
 application dbM rawRequest respond = do
