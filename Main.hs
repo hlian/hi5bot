@@ -93,7 +93,7 @@ jsonOfFirstHand (Person user channel want) = toJSObject pairs
                 ]
         addendum :: String
         addendum = case want of
-          WantsUser user' -> printf "`/hi5` from @%s" (show user')
+          WantsUser user' -> printf "`/hi5 %s` from @%s" (show user) (show user')
           WantsChannel -> "`/hi5`"
 
 postPayload :: (JSON a) => String -> a -> IO ()
