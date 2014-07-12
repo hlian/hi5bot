@@ -1,34 +1,46 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import qualified Control.Concurrent.MVar as MVar
-import Control.Monad.Error (throwError)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
-import qualified Data.ByteString.UTF8 as U
 import qualified Data.Map as M
+import Data.Aeson
+import Data.Functor ((<$>))
 import Data.Map (Map)
 import Data.Maybe (listToMaybe)
+import Data.Text.Lazy (Text)
+import Data.Text.Lazy.IO (putStrLn)
+import qualified Data.Text.Lazy as T
+import Data.Text.Lazy.Encoding (decodeUtf8, encodeUtf8)
+import qualified Data.Text.Format as F
 import Network.Wai
 import qualified Network.HTTP.Conduit as H
 import Network.HTTP.Types (status200, status400)
 import Network.Wai.Handler.Warp (run)
+import Prelude hiding (putStrLn)
 import System.Directory (doesFileExist)
 import System.Environment (getArgs)
-import Text.JSON
-import Text.Printf
 
-type Channel = U.ByteString
-newtype User = User String deriving (Eq, Ord)
+newtype Channel = Channel Text deriving (Eq, Ord, Show)
+newtype User = User Text deriving (Eq, Ord)
+newtype Emoji = Emoji Text
 data Want = WantsUser User | WantsChannel deriving (Eq, Show, Ord)
 data Person = Person User Channel Want deriving (Eq, Show, Ord)
+data Notice = Notice Channel Text Emoji
 
 type DB = Map Channel [Person]
 
 instance Show User where
-  show (User s) = s
+  show (User s) = T.unpack s
 
-userOf :: U.ByteString -> User
-userOf = User . filter (/= '@') . U.toString
+instance ToJSON Notice where
+  toJSON (Notice (Channel channel) text (Emoji emoji)) =
+    object [ "channel" .= T.concat ["#", channel]
+           , "icon_emoji" .= T.concat [":", emoji, ":"]
+           , "parse" .= String "full"
+           , "username" .= String "hi5bot"
+           , "text" .= text
+           ]
 
 dbPut :: MVar.MVar DB -> Person -> IO ()
 dbPut dbM person@(Person _ channel _) = MVar.modifyMVar_ dbM (return . f)
@@ -46,76 +58,68 @@ findPerson db channel want = do
         WantsChannel -> True
   listToMaybe [p | p@(Person user' _ _ ) <- people, predicate user']
 
-personOfRequest :: Request -> Either String Person
+personOfRequest :: Request -> Either Text Person
 personOfRequest raw = do
-  channel <- case p "channel_name" of
-    Right "directmessage" -> throwError ("Can't high-five in a direct message!")
-    Right "privategroup" -> throwError ("Can't high-five in a private group!")
+  channel <- channelOf <$> case p "channel_name" of
+    Right "directmessage" -> Left ("Can't high-five in a direct message (yet)!")
+    Right "privategroup" -> Left ("Can't high-five in a private group (yet)!")
     x -> x
-  user <- p "user_name"
+  user <- userOf <$> p "user_name"
 
   return $ case text of
-    Nothing -> Person (userOf user) channel WantsChannel
-    Just userName -> Person (userOf user) channel (WantsUser $ userOf userName)
+    Nothing -> Person user channel WantsChannel
+    Just userName -> Person user channel (WantsUser $ userOf userName)
 
   where
-    params = M.fromList (queryString raw)
+    textOf = decodeUtf8 . L.fromChunks . return
+    params = M.fromList [(textOf k, textOf <$> v) | (k, v) <- queryString raw]
     p key = case M.lookup key params of
-      Just (Just "") -> throwError ("Empty key in params: " ++ show key)
-      Just (Just value) -> return value
-      _  -> throwError ("Unable to find key in params: " ++ show key)
+      Just (Just "") -> Left (T.concat ["Empty key in params: ", key])
+      Just (Just value) -> Right value
+      _  -> Left (T.concat ["Unable to find key in params: ", key])
     text = case p "text" of Left _ -> Nothing; Right x -> Just x
+    userOf = User . T.filter (/= '@')
+    channelOf = Channel
 
 -- Giver -> Receiver
-jsonOfSecondHand :: Person -> Person -> JSObject U.ByteString
-jsonOfSecondHand (Person giver _ _) (Person receiver channel want) = toJSObject pairs
-  where pairs = [ ("channel", B.concat ["#", channel])
-                , ("username", "hi5bot")
-                , ("text", U.fromString $ printf "@%s %s" (show giver) addendum)
-                , ("icon_emoji", ":rainbow:")
-                , ("parse", "full")
-                ]
-        addendum :: String
-        addendum = case giver == receiver of
+noticeOfSecondHand :: Person -> Person -> Notice
+noticeOfSecondHand (Person (User giver) _ _) (Person (User receiver) channel want) = Notice channel text (Emoji "rainbow")
+  where addendum = case giver == receiver of
           True -> "touches a hand to the other hand while people avert their eyes."
           False -> case want of
-            WantsUser user' | giver /= user' -> printf "swoops in for a high-five with @%s! (Better luck next time, @%s.) :hand::octopus:" (show receiver) (show user')
-                            | otherwise -> printf "completes the high-five with @%s, and it's awesome. :hand::guitar:" (show receiver)
-            WantsChannel -> printf "high-fives @%s! :hand:" (show receiver)
+            WantsUser (User user')
+              | giver /= user' -> F.format "swoops in for a high-five with @{}! (Caw caw! Better luck next time, @{}.) :hand::octopus:" (receiver, user')
+              | otherwise -> F.format "high-fives @{}, and everybody's eyes widen with respect. :hand::guitar:" (F.Only receiver)
+            WantsChannel -> F.format "high-fives @{}! :hand:" (F.Only receiver)
+        text = F.format "@{} {}" (giver, addendum)
 
-jsonOfFirstHand :: Person -> JSObject U.ByteString
-jsonOfFirstHand (Person user channel want) = toJSObject pairs
-  where pairs = [ ("channel", B.concat ["#", channel])
-                , ("username", "hi5bot")
-                , ("text", U.fromString $ printf "@%s formally requests a %s." (show user) addendum)
-                , ("icon_emoji", ":hand:")
-                , ("parse", "full")
-                ]
-        addendum :: String
-        addendum = case want of
-          WantsUser user' -> printf "`/hi5 %s` from @%s" (show user) (show user')
-          WantsChannel -> "`/hi5`"
+noticeOfFirstHand :: Person -> Notice
+noticeOfFirstHand (Person (User user) channel want) = Notice channel text (Emoji "hand")
+  where addendum = case want of
+          WantsUser (User user') -> F.format " for @{} to slap." (F.Only user')
+          WantsChannel -> "."
+        text = F.format "@{} raises a hand high into the air{}" (user, addendum)
 
-postPayload :: (JSON a) => String -> a -> IO ()
-postPayload token payload = do
+postPayload :: String -> Notice -> IO ()
+postPayload token notice = do
   args <- getArgs
   case args == ["-n"] of
     True -> do
-      putStrLn ("+ Pretending (-n) to post " ++ (encode payload))
-      return ()
+      putStrLn (T.concat ["+ Pretending (-n) to post ", (decodeUtf8 . encode) notice])
     False -> do
       response <- get request
-      putStrLn (show $ H.responseBody response)
-      return ()
+      putStrLn (decodeUtf8 (H.responseBody response))
     where
       baseRequest = H.parseUrl ("https://trello.slack.com/services/hooks/incoming-webhook?token=" ++ token)
-      request = fmap (H.urlEncodedBody pairs) baseRequest
+      request = fmap (H.urlEncodedBody [("payload", bytes)]) baseRequest
       get r = r >>= (H.withManager . H.httpLbs)
-      pairs = [("payload", (U.fromString . encode) payload)]
+      bytes = (B.concat . L.toChunks . encode) notice
 
 application :: MVar.MVar DB -> Application
 application dbM rawRequest respond = do
-  putStrLn ("+ Incoming request: " ++ (show $ rawPathInfo rawRequest) ++ (show $ rawQueryString rawRequest))
+  putStrLn $ T.concat ["+ Incoming request: "
+                      , decodeUtf8 $ L.fromChunks [rawPathInfo rawRequest]
+                      , decodeUtf8 $ L.fromChunks [rawQueryString rawRequest]]
   db <- MVar.readMVar dbM
   case personOfRequest rawRequest of
     Left err -> respondWithError err
@@ -125,10 +129,10 @@ application dbM rawRequest respond = do
   where
     headers = [("Content-Type", "text/plain")]
     tokenM = fmap (filter (/= '\n')) (readFile "token")
-    postWant receiver = tokenM >>= \t -> postPayload t (jsonOfFirstHand receiver)
-    postGive giver receiver = tokenM >>= \t -> postPayload t (jsonOfSecondHand giver receiver)
+    postWant receiver = tokenM >>= \t -> postPayload t (noticeOfFirstHand receiver)
+    postGive giver receiver = tokenM >>= \t -> postPayload t (noticeOfSecondHand giver receiver)
     respondWithEmpty = (respond . responseLBS status200 headers) ""
-    respondWithError = respond . responseLBS status400 headers . L.fromStrict . U.fromString
+    respondWithError = respond . responseLBS status400 headers . encodeUtf8
 
 main :: IO ()
 main = do
