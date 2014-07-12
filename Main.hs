@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+import Control.Concurrent.MVar (MVar)
 import qualified Control.Concurrent.MVar as MVar
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
@@ -42,11 +43,11 @@ instance ToJSON Notice where
            , "text" .= text
            ]
 
-dbPut :: MVar.MVar DB -> Person -> IO ()
+dbPut :: MVar DB -> Person -> IO ()
 dbPut dbM person@(Person _ channel _) = MVar.modifyMVar_ dbM (return . f)
   where f db = M.insert channel (person:maybe [] id (M.lookup channel db)) db
 
-dbDelete :: MVar.MVar DB -> Person -> IO ()
+dbDelete :: MVar DB -> Person -> IO ()
 dbDelete dbM person@(Person _ channel _) = MVar.modifyMVar_ dbM (return . f)
   where f db = M.insert channel [p | p <- maybe [] id (M.lookup channel db), p /= person] db
 
@@ -115,7 +116,7 @@ postPayload token notice = do
       get r = r >>= (H.withManager . H.httpLbs)
       bytes = (B.concat . L.toChunks . encode) notice
 
-application :: MVar.MVar DB -> Application
+application :: MVar DB -> Application
 application dbM rawRequest respond = do
   putStrLn $ T.concat ["+ Incoming request: "
                       , decodeUtf8 $ L.fromChunks [rawPathInfo rawRequest]
