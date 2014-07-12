@@ -23,3 +23,8 @@ Create a Custom Command (like `/hi5`) and point it at the HTTP server.
 Now, should you type `/hi5`, you'll get this:
 
 ![hi5bot in action!](screenshot.png)
+
+### Contributors
+
+* [Hao Lian](https://github.com/hlian)
+* [Peter Johnson](https://github.com/nejstastnejsistene)
