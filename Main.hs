@@ -1,51 +1,31 @@
 {-# LANGUAGE OverloadedStrings, NoImplicitPrelude #-}
 
-import           BasePrelude hiding (putStrLn)
-import           Control.Concurrent.MVar (MVar)
+import           BasePrelude hiding (readFile)
+import           Network.Linklater
+
 import qualified Control.Concurrent.MVar as MVar
-import           Control.Lens hiding ((.=))
-import           Data.Aeson
 import           Data.Map (Map)
 import qualified Data.Map as M
-import           Data.Text (Text)
-import qualified Data.Text as T
-import           Data.Text.Encoding (decodeUtf8)
-import qualified Data.Text.Format as F
+import           Data.Text.Lazy (Text)
 import qualified Data.Text.Lazy as TL
-import qualified Data.Text.Lazy.Encoding as TLE
-import           Data.Text.Lazy.IO (putStrLn)
-import           Network.HTTP.Types (status200, status400)
-import           Network.Wai
+import           Data.Text.Lazy.IO (readFile)
 import           Network.Wai.Handler.Warp (run)
-import           Network.Wreq (responseBody, post)
-import           System.Directory (doesFileExist)
-import           System.Environment (getArgs)
 
-newtype Channel = Channel Text deriving (Eq, Ord, Show)
-newtype User = User Text deriving (Eq, Ord, Show)
-newtype Emoji = Emoji Text
-data Want = WantsUser User | WantsChannel deriving (Eq, Show, Ord)
+data Want = WantsUser Text | WantsChannel deriving (Eq, Show, Ord)
 data Person = Person User Channel Want deriving (Eq, Show, Ord)
-data Notice = Notice Channel Text Emoji
-
 type DB = Map Channel [Person]
 
-instance ToJSON Notice where
-  toJSON (Notice (Channel channel) text (Emoji emoji)) =
-    object [ "channel" .= ("#" <> channel)
-           , "icon_emoji" .= (":" <> emoji <> ":")
-           , "parse" .= ("full" :: Text)
-           , "username" .= ("hi5bot" :: Text)
-           , "text" .= text
-           ]
+dbGet :: DB -> Channel -> [Person]
+dbGet db channel =
+  maybe [] id (M.lookup channel db)
 
-dbPut :: MVar DB -> Person -> IO ()
-dbPut dbM person@(Person _ channel _) = MVar.modifyMVar_ dbM (return . f)
-  where f db = M.insert channel (person:maybe [] id (M.lookup channel db)) db
+dbPut :: DB -> Person -> DB
+dbPut db person@(Person _ channel _) =
+  M.insert channel (person:dbGet db channel) db
 
-dbDelete :: MVar DB -> Person -> IO ()
-dbDelete dbM person@(Person _ channel _) = MVar.modifyMVar_ dbM (return . f)
-  where f db = M.insert channel [p | p <- maybe [] id (M.lookup channel db), p /= person] db
+dbDelete :: DB -> Person -> DB
+dbDelete db person@(Person _ channel _) =
+  M.insert channel [p | p <- dbGet db channel, p /= person] db
 
 findPerson :: DB -> Channel -> Want -> Maybe Person
 findPerson db channel want = do
@@ -53,85 +33,98 @@ findPerson db channel want = do
   let predicate user' = case want of
         WantsUser user -> user' == user
         WantsChannel -> True
-  listToMaybe [p | p@(Person user' _ _ ) <- people, predicate user']
+  listToMaybe [p | p@(Person (User user') _ _ ) <- people, predicate user']
 
-personOfRequest :: Request -> Either Text Person
-personOfRequest raw = do
-  channel <- channelOf <$> case p "channel_name" of
-    Right "directmessage" -> Left ("Can't high-five in a direct message (yet)!")
-    Right "privategroup" -> Left ("Can't high-five in a private group (yet)!")
-    x -> x
-  user <- userOf <$> p "user_name"
-
-  return $ case text of
-    Nothing -> Person user channel WantsChannel
-    Just userName -> Person user channel (WantsUser $ userOf userName)
-
+foundMessage :: Person -> Person -> Message
+foundMessage (Person subject _ _) (Person object channel want) =
+  SimpleMessage (EmojiIcon "rainbow") "hi5bot" channel ("@" <> u subject <> " " <> body)
   where
-    textOf = decodeUtf8
-    params = M.fromList [(textOf k, textOf <$> v) | (k, v) <- queryString raw]
-    p key = case M.lookup key params of
-      Just (Just "") -> Left ("Empty key in params: " <> key)
-      Just (Just value) -> Right value
-      _  -> Left ("Unable to find key in params: " <> key)
-    text = case p "text" of Left _ -> Nothing; Right x -> Just x
-    userOf = User . T.filter (/= '@')
-    channelOf = Channel
+    body =
+      case subject == object of
+       True ->
+         "touches a hand to the other hand while people avert their eyes."
+       False ->
+         case want of
+          WantsUser objectDesire
+            | subject /= (User objectDesire) ->
+                "swoops in for a high-five with @"
+                <> u object
+                <> ". Caw caw! Better luck next time, @"
+                <> objectDesire
+                <> ". :hand::octopus:"
+            | otherwise ->
+                "high-fives @"
+                <> u object
+                <> ", and everybody's eyes widen with respect. :hand::guitar:"
+          WantsChannel ->
+            "high-fives @"
+            <> u object
+            <> "! :hand:"
+    u (User x) = x
 
--- Giver -> Receiver
-noticeOfSecondHand :: Person -> Person -> Notice
-noticeOfSecondHand (Person (User giver) _ _) (Person (User receiver) channel want) = Notice channel text (Emoji "rainbow")
-  where addendum = case giver == receiver of
-          True -> "touches a hand to the other hand while people avert their eyes."
-          False -> case want of
-            WantsUser (User user')
-              | giver /= user' -> F.format "swoops in for a high-five with @{}! (Caw caw! Better luck next time, @{}.) :hand::octopus:" (receiver, user')
-              | otherwise -> F.format "high-fives @{}, and everybody's eyes widen with respect. :hand::guitar:" (F.Only receiver)
-            WantsChannel -> F.format "high-fives @{}! :hand:" (F.Only receiver)
-        text = TL.toStrict $ F.format "@{} {}" (giver, addendum)
-
-noticeOfFirstHand :: Person -> Notice
-noticeOfFirstHand (Person (User user) channel want) = Notice channel text (Emoji "hand")
-  where addendum = case want of
-          WantsUser (User user') -> F.format " for @{} to slap." (F.Only user')
-          WantsChannel -> "."
-        text = TL.toStrict $ F.format "@{} raises a hand high into the air{}" (user, addendum)
-
-postPayload :: String -> Notice -> IO ()
-postPayload token notice = do
-  args <- getArgs
-  case args == ["-n"] of
-    True -> do
-      putStrLn $ F.format "+ Pretending (-n) to post {}" [(TLE.decodeUtf8 . encode) notice]
-    False -> do
-      r <- post url (encode notice)
-      putStrLn $ TLE.decodeUtf8 (r ^. responseBody)
-    where
-      url = "https://trello.slack.com/services/hooks/incoming-webhook?token=" <> token
-
-application :: MVar DB -> Application
-application dbM rawRequest respond = do
-  putStrLn $ F.format "+ Incoming request: {} {}" (map decodeUtf8 [rawPathInfo rawRequest, rawQueryString rawRequest])
-  db <- MVar.readMVar dbM
-  case personOfRequest rawRequest of
-    Left err -> respondWithError err
-    Right person@(Person _ channel want) -> case findPerson db channel want of
-      Just receiver -> (dbDelete dbM receiver >> postGive person receiver >> respondWithEmpty)
-      Nothing -> (dbPut dbM person >> postWant person >> respondWithEmpty)
+wantMessage :: Person -> Message
+wantMessage (Person user channel want) =
+  SimpleMessage (EmojiIcon "hand") "hi5bot" channel ("@" <> u user <> " " <> body)
   where
-    headers = [("Content-Type", "text/plain")]
-    tokenM = fmap (filter (/= '\n')) (readFile "token")
-    postWant receiver = tokenM >>= \t -> postPayload t (noticeOfFirstHand receiver)
-    postGive giver receiver = tokenM >>= \t -> postPayload t (noticeOfSecondHand giver receiver)
-    respondWithEmpty = (respond . responseLBS status200 headers) ""
-    respondWithError = respond . responseLBS status400 headers . TLE.encodeUtf8 . TL.fromStrict
+    body =
+      case want of
+       WantsUser objectDesire ->
+         "raises a hand high in the air for @"
+         <> objectDesire
+         <> ". A high-five is afoot!"
+       WantsChannel ->
+         "raises a hand high in the air."
+    u (User x) = x
+
+cheatMode :: Bool
+cheatMode = False
+
+parseWant :: Maybe Text -> Want
+parseWant t =
+  case t' of
+   Just text ->
+     case TL.length text of
+      0 -> WantsChannel
+      _ -> WantsUser text
+   Nothing -> WantsChannel
+  where
+    t' = TL.strip <$> t
+
+parseCommand :: Command -> (User, Want)
+parseCommand (Command user _ maybeText) =
+  case (cheatMode, (map TL.strip . TL.splitOn "--") <$> maybeText) of
+   (True, Just [text', user']) ->
+     (User user', parseWant (return text'))
+   _ ->
+     (user, parseWant maybeText)
+
+hi5 :: MVar DB -> Config -> Maybe Command -> IO Text
+hi5 dbM config (Just command@(Command _ channel _)) = do
+  MVar.modifyMVar_ dbM $ \db -> do
+    case findPerson db channel want of
+     Just giver -> do
+       let db' = dbDelete db giver
+       void (say (foundMessage person giver) config)
+       return db'
+     Nothing -> do
+       let db' = dbPut db person
+       void (say (wantMessage person) config)
+       return db'
+  return ""
+  where
+    (user, want) =
+      parseCommand command
+    person =
+      Person user channel want
+
+hi5 _ _ Nothing = do
+  return "hi5bot is a high-five robot. It's a robot that helps you give and get high-fives. You can't high-five hi5bot. (Yet.) <https://github.com/hlian/hi5bot>"
 
 main :: IO ()
 main = do
-  tokenExists <- doesFileExist "token"
-  case tokenExists of
-    True -> do
-      db <- MVar.newMVar M.empty
-      putStrLn "+ Listening on port 81"
-      run 81 (application db)
-    False -> error "Cannot find file containing the token for the incoming webhook"
+  db <- MVar.newMVar M.empty
+  token <- TL.filter (/= '\n') <$> readFile "token"
+  putStrLn ("+ Listening on port " <> show port)
+  run port (slashSimple (hi5 db (Config "trello.slack.com" token)))
+  where
+    port = 8000
