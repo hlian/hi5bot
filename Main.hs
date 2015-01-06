@@ -71,7 +71,7 @@ wantMessage (Person user channel want) =
        WantsUser objectDesire ->
          "raises a hand high in the air for @"
          <> objectDesire
-         <> ". A high-five is afoot!"
+         <> " to `/hi5`. A high-five is afoot!"
        WantsChannel ->
          "raises a hand high in the air."
     u (User x) = x
