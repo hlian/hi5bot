@@ -1,3 +1,5 @@
+hi5bot is a high-fiving slackbot built with [linklater](https://github.com/hlian/linklater). It, uh, lets you high-five people on Slack.
+
 ### Features
 
 * Only needs an incoming hook and a custom command!
