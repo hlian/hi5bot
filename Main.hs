@@ -6,9 +6,9 @@ import           Network.Linklater
 import qualified Control.Concurrent.MVar as MVar
 import           Data.Map (Map)
 import qualified Data.Map as M
-import           Data.Text.Lazy (Text)
-import qualified Data.Text.Lazy as TL
-import           Data.Text.Lazy.IO (readFile)
+import           Data.Text (Text)
+import qualified Data.Text as Text
+import           Data.Text.IO (readFile)
 import           Network.Wai.Handler.Warp (run)
 
 data Want = WantsUser Text | WantsChannel deriving (Eq, Show, Ord)
@@ -83,23 +83,23 @@ parseWant :: Maybe Text -> Want
 parseWant t =
   case t' of
    Just text ->
-     case TL.length text of
+     case Text.length text of
       0 -> WantsChannel
       _ -> WantsUser text
    Nothing -> WantsChannel
   where
-    t' = TL.strip <$> t
+    t' = Text.strip <$> t
 
 parseCommand :: Command -> (User, Want)
-parseCommand (Command user _ maybeText) =
-  case (cheatMode, (map TL.strip . TL.splitOn "--") <$> maybeText) of
+parseCommand (Command _ user _ maybeText) =
+  case (cheatMode, (map Text.strip . Text.splitOn "--") <$> maybeText) of
    (True, Just [text', user']) ->
      (User user', parseWant (return text'))
    _ ->
      (user, parseWant maybeText)
 
 hi5 :: MVar DB -> Config -> Maybe Command -> IO Text
-hi5 dbM config (Just command@(Command _ channel _)) = do
+hi5 dbM config (Just command@(Command _ _ channel _)) = do
   MVar.modifyMVar_ dbM $ \db -> do
     case findPerson db channel want of
      Just giver -> do
@@ -123,8 +123,8 @@ hi5 _ _ Nothing = do
 main :: IO ()
 main = do
   db <- MVar.newMVar M.empty
-  token <- TL.filter (/= '\n') <$> readFile "token"
+  url <- Text.filter (/= '\n') <$> readFile "token"
   putStrLn ("+ Listening on port " <> show port)
-  run port (slashSimple (hi5 db (Config "trello.slack.com" token)))
+  run port (slashSimple (hi5 db (Config url)))
   where
-    port = 8000
+    port = 3334
