@@ -1,23 +1,27 @@
 {-# LANGUAGE OverloadedStrings, NoImplicitPrelude #-}
 
-import           BasePrelude hiding (readFile)
-import           Network.Linklater
+import BasePrelude hiding (readFile)
+import Network.Linklater
 
 import qualified Control.Concurrent.MVar as MVar
-import           Data.Map (Map)
 import qualified Data.Map as M
-import           Data.Text (Text)
+import Data.Map (Map)
+import Data.Text (Text)
 import qualified Data.Text as Text
-import           Data.Text.IO (readFile)
-import           Network.Wai.Handler.Warp (run)
+import Data.Text.IO (readFile)
+import Network.Wai.Handler.Warp (run)
 
-data Want = WantsUser Text | WantsChannel deriving (Eq, Show, Ord)
-data Person = Person User Channel Want deriving (Eq, Show, Ord)
+data Want = WantsUser Text | WantsChannel
+          deriving (Eq, Show, Ord)
+
+data Person = Person User Channel Want
+            deriving (Eq, Show, Ord)
+
 type DB = Map Channel [Person]
 
 dbGet :: DB -> Channel -> [Person]
 dbGet db channel =
-  maybe [] id (M.lookup channel db)
+  fromMaybe [] (M.lookup channel db)
 
 dbPut :: DB -> Person -> DB
 dbPut db person@(Person _ channel _) =
@@ -40,23 +44,22 @@ foundMessage (Person subject _ _) (Person object channel want) =
   SimpleMessage (EmojiIcon "rainbow") "hi5bot" channel ("@" <> u subject <> " " <> body)
   where
     body =
-      case subject == object of
-       True ->
-         "touches a hand to the other hand while people avert their eyes."
-       False ->
-         case want of
-          WantsUser objectDesire
-            | subject /= (User objectDesire) ->
-                "swoops in for a high-five with @"
-                <> u object
-                <> ". Caw caw! Better luck next time, @"
-                <> objectDesire
-                <> ". :hand::octopus:"
-            | otherwise ->
-                "high-fives @"
-                <> u object
-                <> ", and everybody's eyes widen with respect. :hand::guitar:"
-          WantsChannel ->
+      if subject == object then
+        "touches a hand to the other hand while people avert their eyes."
+      else
+        case want of
+        WantsUser objectDesire
+          | subject /= User objectDesire ->
+            "swoops in for a high-five with @"
+            <> u object
+            <> ". Caw caw! Better luck next time, @"
+            <> objectDesire
+            <> ". :hand::octopus:"
+          | otherwise ->
+            "high-fives @"
+            <> u object
+            <> ", and everybody's eyes widen with respect. :hand::guitar:"
+        WantsChannel ->
             "high-fives @"
             <> u object
             <> "! :hand:"
@@ -100,7 +103,7 @@ parseCommand (Command _ user _ maybeText) =
 
 hi5 :: MVar DB -> Config -> Maybe Command -> IO Text
 hi5 dbM config (Just command@(Command _ _ channel _)) = do
-  MVar.modifyMVar_ dbM $ \db -> do
+  MVar.modifyMVar_ dbM $ \db ->
     case findPerson db channel want of
      Just giver -> do
        let db' = dbDelete db giver
@@ -117,7 +120,7 @@ hi5 dbM config (Just command@(Command _ _ channel _)) = do
     person =
       Person user channel want
 
-hi5 _ _ Nothing = do
+hi5 _ _ Nothing =
   return "hi5bot is a high-five robot. It's a robot that helps you give and get high-fives. You can't high-five hi5bot. (Yet.) <https://github.com/hlian/hi5bot>"
 
 main :: IO ()
